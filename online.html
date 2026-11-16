@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#2c2c2c">
+  <title>五子棋（联机版） · 红黑观察员</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+    body {
+      background: #2c2c2c;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      padding: 12px;
+      color: #eee;
+      overflow-x: hidden;
+    }
+    .game-container {
+      background: #d4a76a;
+      padding: 10px;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      width: min(92vw, 92vh, 620px);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      touch-action: manipulation;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 16px;
+      text-align: center;
+      min-height: 24px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+      justify-content: center;
+    }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      background: #3a3a3a;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+      user-select: none;
+    }
+    button:active { background: #555; transform: scale(0.97); }
+    button.primary { background: #0a7c4e; }
+    button.primary:active { background: #0b9e63; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .mode-switch { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }
+    .mode-switch button { font-size: 13px; padding: 8px 14px; background: #3a3a3a; }
+    .mode-switch button.active { background: #0a7c4e; }
+
+    #onlinePanel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 12px;
+      background: #222;
+      border-radius: 10px;
+      width: min(92vw, 620px);
+    }
+    .online-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center; }
+    #roomCode {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #0b9e63;
+      user-select: all;
+    }
+    #joinInput {
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid #555;
+      background: #333;
+      color: #fff;
+      font-size: 15px;
+      width: 130px;
+      text-align: center;
+      letter-spacing: 2px;
+    }
+    #onlineHint { font-size: 13px; color: #aaa; text-align: center; }
+    .back-link {
+      display: inline-block;
+      margin-top: 14px;
+      font-size: 13px;
+      color: #999;
+      text-decoration: none;
+    }
+    .back-link:active { color: #ccc; }
+  </style>
+</head>
+<body>
+  <div class="game-container">
+    <canvas id="board" width="600" height="600"></canvas>
+  </div>
+  <div id="status">联机模式：创建或加入房间</div>
+  <div class="controls">
+    <button class="primary" onclick="restartGame()">重新开始</button>
+    <button onclick="undoMove()">悔棋</button>
+  </div>
+
+  <div id="onlinePanel">
+    <div class="online-row">
+      <button class="primary" id="btnCreate" onclick="createRoom()">创建房间</button>
+      <span id="roomCode"></span>
+      <button id="btnCopy" style="display:none" onclick="copyRoomCode()">复制房号</button>
+    </div>
+    <div class="online-row">
+      <input id="joinInput" type="text" inputmode="numeric" placeholder="输入房号" maxlength="6">
+      <button id="btnJoin" onclick="joinRoom()">加入房间</button>
+    </div>
+    <div id="onlineHint">创建房间后把房号发给好友，对方输入房号加入</div>
+  </div>
+
+  <a class="back-link" href="./index.html">← 返回模式选择</a>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const canvas = document.getElementById('board');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('status');
+      const roomCodeEl = document.getElementById('roomCode');
+      const joinInput = document.getElementById('joinInput');
+      const onlineHint = document.getElementById('onlineHint');
+      const btnCreate = document.getElementById('btnCreate');
+      const btnJoin = document.getElementById('btnJoin');
+      const btnCopy = document.getElementById('btnCopy');
+
+      const SIZE = 15;
+      const PADDING = 30;
+      const CANVAS_SIZE = 600;
+      const CELL = (CANVAS_SIZE - PADDING * 2) / (SIZE - 1);
+
+      let board = [];
+      let currentPlayer = 1;
+      let gameOver = false;
+      let history = [];
+      let aiThinking = false;
+
+      let peer = null;
+      let conn = null;
+      let myColor = 0;
+      let onlineReady = false;
+
+      function initBoard() {
+        board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+        currentPlayer = 1;
+        gameOver = false;
+        history = [];
+        draw();
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        ctx.fillStyle = '#e8c48a';
+        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+        ctx.strokeStyle = '#8b6b3d';
+        ctx.lineWidth = 1.2;
+        for (let i = 0; i < SIZE; i++) {
+          const pos = PADDING + i * CELL;
+          ctx.beginPath(); ctx.moveTo(PADDING, pos); ctx.lineTo(CANVAS_SIZE - PADDING, pos); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(pos, PADDING); ctx.lineTo(pos, CANVAS_SIZE - PADDING); ctx.stroke();
+        }
+
+        const center = PADDING + 7 * CELL;
+        ctx.fillStyle = '#5a3e1b';
+        ctx.beginPath(); ctx.arc(center, center, 4, 0, Math.PI * 2); ctx.fill();
+
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const val = board[row][col];
+            if (!val) continue;
+            const cx = PADDING + col * CELL;
+            const cy = PADDING + row * CELL;
+            const radius = CELL * 0.42;
+
+            ctx.beginPath();
+            ctx.arc(cx + 2, cy + 2, radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fill();
+
+            const gradient = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, radius * 0.1, cx, cy, radius);
+            if (val === 1) {
+              gradient.addColorStop(0, '#777'); gradient.addColorStop(0.6, '#111'); gradient.addColorStop(1, '#000');
+            } else {
+              gradient.addColorStop(0, '#fff'); gradient.addColorStop(0.7, '#eee'); gradient.addColorStop(1, '#ccc');
+            }
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            ctx.strokeStyle = val === 1 ? '#000' : '#999';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+
+      function checkWin(row, col, player) {
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        for (const [dx, dy] of dirs) {
+          let count = 1;
+          for (let step = 1; step < 5; step++) {
+            const nr = row + dx * step, nc = col + dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) break;
+            if (board[nr][nc] !== player) break;
+            count++;
+          }
+          for (let step = 1; step < 5; step++) {
+            const nr = row - dx * step, nc = col - dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) break;
+            if (board[nr][nc] !== player) break;
+            count++;
+          }
+          if (count >= 5) return true;
+        }
+        return false;
+      }
+
+      function applyMove(row, col, player) {
+        if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
+        if (board[row][col] !== 0) return false;
+        board[row][col] = player;
+        history.push({ row, col, player });
+        draw();
+        if (checkWin(row, col, player)) {
+          gameOver = true;
+          statusEl.textContent = player === 1 ? '⚫ 黑棋获胜！' : '⚪ 白棋获胜！';
+          return true;
+        }
+        currentPlayer = player === 1 ? 2 : 1;
+        statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
+        return false;
+      }
+
+      function placeStone(row, col) {
+        if (gameOver) return false;
+        if (!onlineReady) { statusEl.textContent = '等待对手连接...'; return false; }
+        if (currentPlayer !== myColor) { statusEl.textContent = '还没轮到你'; return false; }
+        if (board[row][col] !== 0) return false;
+        sendData({ type: 'move', row, col, player: currentPlayer });
+        applyMove(row, col, currentPlayer);
+        return true;
+      }
+
+      canvas.addEventListener('click', (e) => {
+        if (gameOver) return;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        const col = Math.round((x - PADDING) / CELL);
+        const row = Math.round((y - PADDING) / CELL);
+        if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return;
+        const snapX = PADDING + col * CELL, snapY = PADDING + row * CELL;
+        if (Math.hypot(x - snapX, y - snapY) > CELL * 0.5) return;
+        placeStone(row, col);
+      });
+
+      function undoMove() {
+        if (!onlineReady) return;
+        if (history.length < 1) return;
+        sendData({ type: 'undo' });
+        doUndo();
+      }
+
+      function doUndo() {
+        if (history.length === 0) return;
+        gameOver = false;
+        const last = history.pop();
+        board[last.row][last.col] = 0;
+        currentPlayer = last.player;
+        statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
+        draw();
+      }
+
+      function restartGame() {
+        if (!onlineReady) { initBoard(); return; }
+        sendData({ type: 'restart' });
+        initBoard();
+      }
+
+      function createRoom() {
+        cleanupPeer();
+        btnCreate.disabled = true;
+        btnJoin.disabled = true;
+        onlineHint.textContent = '正在创建房间...';
+
+        const code = String(Math.floor(100000 + Math.random() * 900000));
+        peer = new Peer('gomoku-' + code, { debug: 1 });
+
+        peer.on('open', () => {
+          roomCodeEl.textContent = code;
+          btnCopy.style.display = 'inline-block';
+          onlineHint.textContent = '房间已创建，等待对手加入...';
+          statusEl.textContent = '等待对手连接...';
+          myColor = 1;
+        });
+
+        peer.on('connection', (c) => {
+          if (conn) { c.close(); return; }
+          conn = c;
+          setupConn();
+          onlineReady = true;
+          onlineHint.textContent = '对手已加入！你执黑先手';
+          statusEl.textContent = '黑棋回合（你）';
+          initBoard();
+        });
+
+        peer.on('error', (err) => {
+          console.error(err);
+          onlineHint.textContent = '创建失败：' + (err.type || err.message) + '，请重试';
+          btnCreate.disabled = false;
+          btnJoin.disabled = false;
+        });
+      }
+
+      function joinRoom() {
+        const code = joinInput.value.trim();
+        if (!/^\d{6}$/.test(code)) { onlineHint.textContent = '请输入 6 位数字房号'; return; }
+
+        cleanupPeer();
+        btnCreate.disabled = true;
+        btnJoin.disabled = true;
+        onlineHint.textContent = '正在连接房间...';
+
+        peer = new Peer({ debug: 1 });
+        myColor = 2;
+
+        peer.on('open', () => {
+          conn = peer.connect('gomoku-' + code, { reliable: true });
+          setupConn();
+          conn.on('open', () => {
+            onlineReady = true;
+            onlineHint.textContent = '已连接！你执白后手';
+            statusEl.textContent = '等待黑棋落子...';
+            initBoard();
+          });
+        });
+
+        peer.on('error', (err) => {
+          console.error(err);
+          onlineHint.textContent = '连接失败：' + (err.type || err.message) + '，请检查房号';
+          btnCreate.disabled = false;
+          btnJoin.disabled = false;
+        });
+      }
+
+      function setupConn() {
+        conn.on('data', (data) => {
+          if (!data || !data.type) return;
+          if (data.type === 'move') {
+            applyMove(data.row, data.col, data.player);
+          } else if (data.type === 'undo') {
+            doUndo();
+          } else if (data.type === 'restart') {
+            initBoard();
+            statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
+          }
+        });
+        conn.on('close', () => {
+          onlineReady = false;
+          onlineHint.textContent = '连接已断开';
+          statusEl.textContent = '对手已断开连接';
+        });
+        conn.on('error', (err) => {
+          console.error(err);
+          onlineHint.textContent = '连接错误：' + (err.type || err.message);
+        });
+      }
+
+      function sendData(obj) {
+        if (conn && conn.open) {
+          try { conn.send(obj); } catch (e) { console.error(e); }
+        }
+      }
+
+      function copyRoomCode() {
+        const code = roomCodeEl.textContent;
+        if (!code) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(code).then(() => {
+            onlineHint.textContent = '房号已复制：' + code;
+          }).catch(() => {
+            onlineHint.textContent = '复制失败，请手动记下：' + code;
+          });
+        } else {
+          onlineHint.textContent = '请手动记下房号：' + code;
+        }
+      }
+
+      function cleanupPeer() {
+        onlineReady = false;
+        if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+        if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+      }
+
+      window.restartGame = restartGame;
+      window.undoMove = undoMove;
+      window.createRoom = createRoom;
+      window.joinRoom = joinRoom;
+      window.copyRoomCode = copyRoomCode;
+
+      initBoard();
+    })();
+  </script>
+</body>
+</html>
