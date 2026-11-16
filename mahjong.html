@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a5c3a">
+<title>广东麻将 · 四人局</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
+  body {
+    background:#0f3d28;
+    color:#eee;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; min-height:100dvh;
+    padding:8px; overflow-x:hidden; user-select:none;
+    touch-action: manipulation; /* 防止双击缩放 */
+  }
+  #table {
+    width:min(100vw, 900px);
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    grid-template-rows:auto auto auto;
+    gap:6px;
+    grid-template-areas:
+      ". top ."
+      "left center right"
+      "bottom bottom bottom";
+    flex:1;
+    min-height:0;
+  }
+  .seat { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
+  #seatTop { grid-area:top; }
+  #seatLeft { grid-area:left; }
+  #seatRight { grid-area:right; }
+  #seatBottom { grid-area:bottom; }
+  .player-name { font-size:13px; font-weight:600; padding:2px 8px; border-radius:10px; background:#1f5a3c; }
+  .player-name.active { background:#d4a017; color:#111; }
+  .hand-info { font-size:11px; color:#9c9; }
+  .hand-tiles { display:flex; flex-wrap:wrap; gap:3px; justify-content:center; }
+  #centerArea {
+    grid-area:center;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:8px; min-height:0;
+  }
+  #wallInfo { font-size:12px; color:#9c9; }
+  #discardArea {
+    display:flex; flex-wrap:wrap; gap:3px; justify-content:center;
+    max-width:100%; max-height:120px; overflow-y:auto;
+    background:rgba(0,0,0,0.18); border-radius:8px; padding:6px;
+  }
+  #status {
+    font-size:15px; font-weight:600; text-align:center; min-height:22px;
+    color:#ffe08a; padding:4px;
+  }
+  #actions {
+    display:flex; flex-wrap:wrap; gap:8px; justify-content:center;
+    padding:8px 0; min-height:52px;
+  }
+  button {
+    padding:9px 18px; border:none; border-radius:8px;
+    background:#2a6e4a; color:#fff; font-size:15px; font-weight:600;
+    cursor:pointer; transition:background .12s, transform .1s;
+  }
+  button:active { background:#3a8e62; transform:scale(.97); }
+  button.primary { background:#c0392b; }
+  button.primary:active { background:#e04a3a; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.ghost { background:#3a3a3a; }
+
+  .tile {
+    width:36px; height:50px;
+    background:linear-gradient(#fffdf5, #e8e0c8);
+    border-radius:5px;
+    border:1px solid #b5a878;
+    box-shadow:0 2px 0 #9c8f63;
+    display:flex; align-items:center; justify-content:center;
+    position:relative; flex-shrink:0;
+    padding:3px;
+    transition:transform 0.1s, box-shadow 0.1s;
+    touch-action: manipulation; /* 防止双击缩放 */
+  }
+  .tile-face { width:100%; height:100%; display:block; }
+  .tile.back {
+    background:linear-gradient(#2f7d52, #1f5a3c);
+    border-color:#16412b; box-shadow:0 2px 0 #123a26;
+  }
+  .tile.back::after { content:""; width:60%; height:60%; border:1px solid rgba(255,255,255,.25); border-radius:3px; }
+  .tile.small { width:28px; height:39px; padding:2px; }
+  .tile.clickable { cursor:pointer; }
+  .tile.clickable:active { transform:translateY(-4px); box-shadow:0 5px 0 #9c8f63; }
+  
+  .tile.selected { transform:translateY(-10px); box-shadow:0 7px 0 #d4a017; border-color:#d4a017; }
+  .tile.just-drawn { border-color:#d4a017; box-shadow: inset 0 0 0 2px #d4a017, 0 2px 0 #9c8f63; }
+
+  #seatBottom .hand-tiles { gap:4px; }
+  #seatBottom .tile { width:40px; height:56px; }
+
+  .meld-group { display:flex; gap:2px; padding:2px; border-radius:4px; background:rgba(255,255,255,.06); }
+
+  @media (max-width:420px) {
+    .tile { width:30px; height:42px; padding:2px; }
+    .tile.small { width:24px; height:33px; padding:1.5px; }
+    #seatBottom .tile { width:34px; height:47px; }
+    button { padding:8px 13px; font-size:13px; }
+    #discardArea { max-height:90px; }
+  }
+</style>
+</head>
+<body>
+<div id="table">
+  <div class="seat" id="seatTop">
+    <div class="player-name" id="nameTop">上家（AI）</div>
+    <div class="hand-info" id="infoTop"></div>
+    <div class="hand-tiles" id="handTop"></div>
+    <div class="hand-tiles" id="meldsTop"></div>
+  </div>
+  <div class="seat" id="seatLeft">
+    <div class="player-name" id="nameLeft">对家（AI）</div>
+    <div class="hand-info" id="infoLeft"></div>
+    <div class="hand-tiles" id="handLeft"></div>
+    <div class="hand-tiles" id="meldsLeft"></div>
+  </div>
+  <div id="centerArea">
+    <div id="wallInfo">牌墙剩余：108</div>
+    <div id="discardArea"></div>
+    <div id="status">准备开始</div>
+  </div>
+  <div class="seat" id="seatRight">
+    <div class="player-name" id="nameRight">下家（AI）</div>
+    <div class="hand-info" id="infoRight"></div>
+    <div class="hand-tiles" id="handRight"></div>
+    <div class="hand-tiles" id="meldsRight"></div>
+  </div>
+  <div class="seat" id="seatBottom">
+    <div class="player-name" id="nameBottom">你</div>
+    <div class="hand-info" id="infoBottom"></div>
+    <div class="hand-tiles" id="meldsBottom"></div>
+    <div class="hand-tiles" id="handBottom"></div>
+  </div>
+</div>
+<div id="actions"></div>
+
+<script>
+(function(){
+'use strict';
+
+const SUITS = { TONG:1, TIAO:2, FENG:3, JIAN:4 };
+const TILE_NAMES = {
+  11:'一筒',12:'二筒',13:'三筒',14:'四筒',15:'五筒',16:'六筒',17:'七筒',18:'八筒',19:'九筒',
+  21:'一条',22:'二条',23:'三条',24:'四条',25:'五条',26:'六条',27:'七条',28:'八条',29:'九条',
+  31:'东',32:'南',33:'西',34:'北',35:'中',36:'发',37:'白'
+};
+
+function tileSuit(t){ return Math.floor(t/10); }
+function tileRank(t){ return t%10; }
+function isFengJian(t){ return t>=31; }
+
+function buildWall(){
+  const wall=[];
+  for(let r=1;r<=9;r++) for(let i=0;i<4;i++) wall.push(10+r);
+  for(let r=1;r<=9;r++) for(let i=0;i<4;i++) wall.push(20+r);
+  for(let t=31;t<=34;t++) for(let i=0;i<4;i++) wall.push(t);
+  for(let t=35;t<=37;t++) for(let i=0;i<4;i++) wall.push(t);
+  return wall;
+}
+
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+
+// ==================== 牌面图案绘制 ====================
+const TONG_COLORS = ['#1e5aa8','#1e8a4a','#b02a2a','#7a3fa0','#c47a12','#0f7a7a','#8a1e5a','#3a5a1e','#2a2a2a'];
+
+function drawTongFace(svg, rank){
+  const color = TONG_COLORS[rank-1];
+  const positions = getTongPositions(rank);
+  positions.forEach(p=>{
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', p.x); c.setAttribute('cy', p.y);
+    c.setAttribute('r', p.r);
+    c.setAttribute('fill', '#fffdf5');
+    c.setAttribute('stroke', color);
+    c.setAttribute('stroke-width', Math.max(1.2, p.r*0.28));
+    svg.appendChild(c);
+    const c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c2.setAttribute('cx', p.x); c2.setAttribute('cy', p.y);
+    c2.setAttribute('r', p.r*0.42);
+    c2.setAttribute('fill', color);
+    svg.appendChild(c2);
+  });
+}
+
+function getTongPositions(rank){
+  const layouts = {
+    1:[[50,50]],
+    2:[[50,30],[50,70]],
+    3:[[30,25],[50,50],[70,75]],
+    4:[[32,32],[68,32],[32,68],[68,68]],
+    5:[[28,28],[72,28],[50,50],[28,72],[72,72]],
+    6:[[30,22],[70,22],[30,50],[70,50],[30,78],[70,78]],
+    7:[[25,20],[50,20],[75,20],[35,50],[65,50],[25,80],[75,80]],
+    8:[[30,20],[70,20],[30,45],[70,45],[30,70],[70,70],[30,88],[70,88]],
+    9:[[24,22],[50,22],[76,22],[24,50],[50,50],[76,50],[24,78],[50,78],[76,78]]
+  };
+  const arr = layouts[rank] || [];
+  return arr.map(([x,y])=>({x, y, r: rank>=7 ? 10 : (rank>=4?12:14)}));
+}
+
+function drawTiaoFace(svg, rank){
+  const color = '#1e8a4a';
+  if(rank===1){
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    const body = document.createElementNS('http://www.w3.org/2000/svg','ellipse');
+    body.setAttribute('cx',50); body.setAttribute('cy',58);
+    body.setAttribute('rx',16); body.setAttribute('ry',22);
+    body.setAttribute('fill', color);
+    g.appendChild(body);
+    const head = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    head.setAttribute('cx',50); head.setAttribute('cy',28);
+    head.setAttribute('r',11);
+    head.setAttribute('fill', color);
+    g.appendChild(head);
+    const eye = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    eye.setAttribute('cx',54); eye.setAttribute('cy',25);
+    eye.setAttribute('r',2.2);
+    eye.setAttribute('fill','#fffdf5');
+    g.appendChild(eye);
+    const beak = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    beak.setAttribute('points','60,28 72,30 60,34');
+    beak.setAttribute('fill','#c47a12');
+    g.appendChild(beak);
+    const tail = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    tail.setAttribute('points','38,78 24,94 44,86');
+    tail.setAttribute('fill','#15683a');
+    g.appendChild(tail);
+    const wing = document.createElementNS('http://www.w3.org/2000/svg','path');
+    wing.setAttribute('d','M42 48 Q34 62 44 74 Q52 62 50 50 Z');
+    wing.setAttribute('fill','#2aa860');
+    g.appendChild(wing);
+    svg.appendChild(g);
+    return;
+  }
+
+  const layouts = {
+    2:[[50,25],[50,75]],
+    3:[[30,25],[50,50],[70,75]],
+    4:[[32,28],[68,28],[32,72],[68,72]],
+    5:[[28,24],[72,24],[50,50],[28,76],[72,76]],
+    6:[[30,22],[50,22],[70,22],[30,50],[50,50],[70,50]],
+    7:[[25,20],[50,20],[75,20],[25,50],[50,50],[75,50],[50,80]],
+    8:[[30,22],[50,22],[70,22],[30,50],[70,50],[30,78],[50,78],[70,78]],
+    9:[[24,20],[50,20],[76,20],[24,50],[50,50],[76,50],[24,80],[50,80],[76,80]]
+  };
+  const arr = layouts[rank] || [];
+  const colorList = ['#1e8a4a','#b02a2a','#1e5aa8'];
+  arr.forEach(([x,y],i)=>{
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    const c = colorList[i%3];
+    const w = rank>=7 ? 7 : (rank>=4?8:10);
+    const h = rank>=7 ? 26 : (rank>=4?28:32);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rect.setAttribute('x', x-w/2);
+    rect.setAttribute('y', y-h/2);
+    rect.setAttribute('width', w);
+    rect.setAttribute('height', h);
+    rect.setAttribute('rx', w/2);
+    rect.setAttribute('fill', c);
+    g.appendChild(rect);
+    const hl = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    hl.setAttribute('x', x-w/2+1.5);
+    hl.setAttribute('y', y-h/2+2);
+    hl.setAttribute('width', w*0.3);
+    hl.setAttribute('height', h-4);
+    hl.setAttribute('rx', w*0.15);
+    hl.setAttribute('fill', 'rgba(255,255,255,0.35)');
+    g.appendChild(hl);
+    svg.appendChild(g);
+  });
+}
+
+// ==================== 字牌 ====================
+function drawZiFace(svg, tile){
+  const map = {31:'东',32:'南',33:'西',34:'北',35:'中',36:'发',37:'白'};
+  const colorMap = {31:'#1e5aa8',32:'#1e8a4a',33:'#b02a2a',34:'#2a2a2a',35:'#c0392b',36:'#1e8a4a',37:'#1e5aa8'};
+  
+  if (tile === 37) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('stroke', colorMap[37]); g.setAttribute('fill','none');
+    const r1 = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r1.setAttribute('x',22); r1.setAttribute('y',22); r1.setAttribute('width',56); r1.setAttribute('height',56); r1.setAttribute('rx',6);
+    r1.setAttribute('stroke-width',3.5); g.appendChild(r1);
+    const r2 = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r2.setAttribute('x',34); r2.setAttribute('y',34); r2.setAttribute('width',32); r2.setAttribute('height',32); r2.setAttribute('rx',3);
+    r2.setAttribute('stroke-width',1.8); g.appendChild(r2);
+    svg.appendChild(g);
+    return;
+  }
+
+  const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('x',50); 
+  t.setAttribute('y',54); 
+  t.setAttribute('text-anchor','middle');
+  t.setAttribute('dominant-baseline','central');
+  t.setAttribute('font-size', 52);
+  t.setAttribute('font-weight','bold');
+  t.setAttribute('font-family','"KaiTi", "STKaiti", "SimSun", "Songti SC", "Microsoft YaHei", serif');
+  t.setAttribute('fill', colorMap[tile]);
+  t.textContent = map[tile];
+  svg.appendChild(t);
+}
+
+function makeFaceSvg(tile){
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('viewBox','0 0 100 100');
+  svg.setAttribute('class','tile-face');
+  svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+  const suit = tileSuit(tile);
+  if(suit===SUITS.TONG) drawTongFace(svg, tileRank(tile));
+  else if(suit===SUITS.TIAO) drawTiaoFace(svg, tileRank(tile));
+  else drawZiFace(svg, tile);
+  return svg;
+}
+
+// ==================== 胡牌判断 ====================
+function canFormMelds(counts, needMelds){
+  if(needMelds===0){
+    for(const v of counts.values()) if(v!==0) return false;
+    return true;
+  }
+  let first=null;
+  for(const [k,v] of counts){ if(v>0){ first=k; break; } }
+  if(first===null) return false;
+  if(counts.get(first)>=3){
+    counts.set(first, counts.get(first)-3);
+    if(canFormMelds(counts, needMelds-1)){ counts.set(first, counts.get(first)+3); return true; }
+    counts.set(first, counts.get(first)+3);
+  }
+  if(!isFengJian(first) && tileRank(first)<=7){
+    const t2 = first+1, t3 = first+2;
+    if((counts.get(t2)||0)>0 && (counts.get(t3)||0)>0){
+      counts.set(first, counts.get(first)-1);
+      counts.set(t2, counts.get(t2)-1);
+      counts.set(t3, counts.get(t3)-1);
+      if(canFormMelds(counts, needMelds-1)){
+        counts.set(first, counts.get(first)+1);
+        counts.set(t2, counts.get(t2)+1);
+        counts.set(t3, counts.get(t3)+1);
+        return true;
+      }
+      counts.set(first, counts.get(first)+1);
+      counts.set(t2, counts.get(t2)+1);
+      counts.set(t3, counts.get(t3)+1);
+    }
+  }
+  return false;
+}
+
+function canWin(handTiles){
+  if(handTiles.length % 3 !== 2) return false;
+  const counts = new Map();
+  for(const t of handTiles) counts.set(t, (counts.get(t)||0)+1);
+  for(const [k,v] of counts){
+    if(v>=2){
+      counts.set(k, v-2);
+      const ok = canFormMelds(counts, (handTiles.length-2)/3);
+      counts.set(k, v);
+      if(ok) return true;
+    }
+  }
+  return false;
+}
+
+function detectPatterns(handTiles, melds){
+  const all = [...handTiles];
+  for(const m of melds) for(const t of m.tiles) all.push(t);
+  const suits = new Set();
+  let hasFengJian = false;
+  for(const t of all){
+    if(isFengJian(t)) hasFengJian = true;
+    else suits.add(tileSuit(t));
+  }
+  const patterns = [];
+  if(!hasFengJian && suits.size===1) patterns.push('清一色');
+  if(hasFengJian && suits.size===0) patterns.push('全字');
+  return patterns;
+}
+
+// ==================== 游戏状态 ====================
+const PLAYER_NAMES = ['你','下家（AI）','对家（AI）','上家（AI）'];
+const SEAT_IDS = ['Bottom','Right','Top','Left'];
+let state = null;
+
+// 用于双击检测的变量
+let lastClickIndex = -1;
+let lastClickTime = 0;
+
+function newGame(){
+  const wall = shuffle(buildWall());
+  const players = [];
+  for(let i=0;i<4;i++){
+    players.push({ hand: [], melds: [], discards: [], isAI: i!==0 });
+  }
+  for(let i=0;i<4;i++){
+    const n = i===0 ? 14 : 13;
+    for(let j=0;j<n;j++) players[i].hand.push(wall.pop());
+    players[i].hand.sort((a,b)=>a-b);
+  }
+  state = {
+    wall, players, turn: 0, phase: 'discard',
+    lastDiscard: null, lastDiscardBy: -1,
+    pendingActions: [], gameOver: false, winner: -1, winType: '',
+    justDrawn: null, 
+    selectedIndex: -1
+  };
+  state.justDrawn = state.players[0].hand[state.players[0].hand.length-1];
+  
+  lastClickIndex = -1; // 重置点击记录
+  lastClickTime = 0;
+
+  render();
+  updateStatus('轮到你出牌');
+  showPlayerActions();
+}
+
+// ==================== 渲染 ====================
+function tileEl(t, opts={}){
+  const el = document.createElement('div');
+  el.className = 'tile' + (opts.small?' small':'') + (opts.back?' back':'') + (opts.clickable?' clickable':'') + (opts.selected?' selected':'') + (opts.justDrawn?' just-drawn':'') + (opts.highlight?' highlight':'');
+  if(opts.back){ return el; }
+  el.appendChild(makeFaceSvg(t));
+  if(opts.onClick){ el.addEventListener('click', opts.onClick); }
+  return el;
+}
+
+function renderHand(seat){
+  const p = state.players[seat];
+  const handEl = document.getElementById('hand'+SEAT_IDS[seat]);
+  const meldEl = document.getElementById('melds'+SEAT_IDS[seat]);
+  const infoEl = document.getElementById('info'+SEAT_IDS[seat]);
+  handEl.innerHTML = '';
+  meldEl.innerHTML = '';
+
+  if(seat===0){
+    const sorted = [...p.hand].sort((a,b)=>a-b);
+    
+    let justDrawnIdx = -1;
+    if (state.turn === 0 && state.justDrawn !== null) {
+       for (let i = sorted.length - 1; i >= 0; i--) {
+           if (sorted[i] === state.justDrawn) {
+               justDrawnIdx = i;
+               break;
+           }
+       }
+    }
+
+    sorted.forEach((t,idx)=>{
+      const el = tileEl(t, {
+        clickable: state.turn===0 && state.phase==='discard',
+        justDrawn: idx === justDrawnIdx,
+        selected: state.selectedIndex === idx,
+        onClick: ()=>{
+          if(state.turn!==0 || state.phase!=='discard') return;
+          
+          // ===== 双击检测逻辑 =====
+          const now = Date.now();
+          if (lastClickIndex === idx && (now - lastClickTime) < 350) {
+            // 如果双击的是同一张牌，且间隔小于350毫秒，直接出牌
+            lastClickIndex = -1;
+            lastClickTime = 0;
+            discardTile(0, idx);
+            return;
+          }
+          
+          // 单击逻辑：记录点击并切换选中状态
+          lastClickIndex = idx;
+          lastClickTime = now;
+          state.selectedIndex = (state.selectedIndex === idx ? -1 : idx);
+          render();
+          showPlayerActions();
+        }
+      });
+      handEl.appendChild(el);
+    });
+    infoEl.textContent = `手牌 ${p.hand.length} 张`;
+  } else {
+    for(let i=0;i<p.hand.length;i++){
+      handEl.appendChild(tileEl(0,{back:true, small:true}));
+    }
+    infoEl.textContent = `手牌 ${p.hand.length} 张`;
+  }
+
+  p.melds.forEach(m=>{
+    const g = document.createElement('div');
+    g.className = 'meld-group';
+    m.tiles.forEach(t=> g.appendChild(tileEl(t,{small:true})));
+    meldEl.appendChild(g);
+  });
+}
+
+function renderDiscards(){
+  const area = document.getElementById('discardArea');
+  area.innerHTML = '';
+  for(let i=0;i<4;i++){
+    state.players[i].discards.forEach(t=>{
+      const el = tileEl(t,{small:true});
+      el.title = PLAYER_NAMES[i];
+      area.appendChild(el);
+    });
+  }
+  document.getElementById('wallInfo').textContent = `牌墙剩余：${state.wall.length}`;
+}
+
+function render(){
+  for(let i=0;i<4;i++){
+    renderHand(i);
+    const nameEl = document.getElementById('name'+SEAT_IDS[i]);
+    nameEl.textContent = PLAYER_NAMES[i];
+    nameEl.classList.toggle('active', state.turn===i && !state.gameOver);
+  }
+  renderDiscards();
+}
+
+function updateStatus(msg){
+  document.getElementById('status').textContent = msg;
+}
+
+// ==================== 操作按钮 ====================
+function showPlayerActions(){
+  const actionsEl = document.getElementById('actions');
+  actionsEl.innerHTML = '';
+  if(state.gameOver) return;
+
+  if(state.phase==='waiting' && state.pendingActions.length>0){
+    const myActions = state.pendingActions.filter(a=>a.player===0);
+    if(myActions.length>0){
+      myActions.forEach(a=>{
+        const btn = document.createElement('button');
+        btn.className = 'primary';
+        btn.textContent = a.label;
+        btn.onclick = ()=> resolveAction(0, a.type);
+        actionsEl.appendChild(btn);
+      });
+      const passBtn = document.createElement('button');
+      passBtn.className = 'ghost';
+      passBtn.textContent = '过';
+      passBtn.onclick = ()=> resolveAction(0, 'pass');
+      actionsEl.appendChild(passBtn);
+      return;
+    }
+  }
+
+  if(state.turn!==0 || state.phase!=='discard') return;
+  const p = state.players[0];
+
+  if(canWin(p.hand)){
+    const btn = document.createElement('button');
+    btn.className = 'primary';
+    btn.textContent = '自摸胡';
+    btn.onclick = ()=> declareWin(0, '自摸');
+    actionsEl.appendChild(btn);
+  }
+
+  const cnt = new Map();
+  for(const t of p.hand) cnt.set(t,(cnt.get(t)||0)+1);
+  for(const [t,c] of cnt){
+    if(c===4){
+      const btn = document.createElement('button');
+      btn.textContent = `暗杠 ${TILE_NAMES[t]}`;
+      btn.onclick = ()=> doAnGang(0, t);
+      actionsEl.appendChild(btn);
+    }
+  }
+
+  p.melds.forEach((m,idx)=>{
+    if(m.type==='peng'){
+      const t = m.tiles[0];
+      if(p.hand.includes(t)){
+        const btn = document.createElement('button');
+        btn.textContent = `补杠 ${TILE_NAMES[t]}`;
+        btn.onclick = ()=> doBuGang(0, idx);
+        actionsEl.appendChild(btn);
+      }
+    }
+  });
+
+  if(state.selectedIndex !== -1){
+    const sorted = [...p.hand].sort((a,b)=>a-b);
+    const selectedTile = sorted[state.selectedIndex];
+    if(selectedTile !== undefined){
+      const btn = document.createElement('button');
+      btn.className = 'primary';
+      btn.textContent = `打出 ${TILE_NAMES[selectedTile]}`;
+      btn.onclick = ()=> discardTile(0, state.selectedIndex);
+      actionsEl.appendChild(btn);
+    }
+  }
+
+  const restart = document.createElement('button');
+  restart.className = 'ghost';
+  restart.textContent = '重新开局';
+  restart.onclick = ()=> newGame();
+  actionsEl.appendChild(restart);
+}
+
+// ==================== 出牌 ====================
+function discardTile(seat, sortedIndex){
+  if(state.turn!==seat || state.phase!=='discard') return;
+  const p = state.players[seat];
+  const sorted = [...p.hand].sort((a,b)=>a-b);
+  const tile = sorted[sortedIndex];
+  if(tile === undefined) return;
+  
+  const realIdx = p.hand.indexOf(tile);
+  if(realIdx < 0) return;
+  
+  p.hand.splice(realIdx,1);
+  p.discards.push(tile);
+  
+  state.lastDiscard = tile;
+  state.lastDiscardBy = seat;
+  state.selectedIndex = -1;
+  state.justDrawn = null;
+  state.phase = 'waiting';
+  state.pendingActions = [];
+  
+  // 重置双击记录
+  lastClickIndex = -1;
+  lastClickTime = 0;
+
+  render();
+
+  const actions = [];
+  for(let i=0;i<4;i++){
+    if(i===seat) continue;
+    const other = state.players[i];
+    const combined = [...other.hand, tile];
+    if(canWin(combined)) actions.push({player:i, type:'hu', label:'胡', tile, priority:3});
+    const sameCount = other.hand.filter(t=>t===tile).length;
+    if(sameCount>=3) actions.push({player:i, type:'gang', label:'杠', tile, priority:2});
+    if(sameCount>=2) actions.push({player:i, type:'peng', label:'碰', tile, priority:1});
+  }
+
+  if(actions.length===0){ nextTurn(); return; }
+
+  actions.sort((a,b)=> b.priority - a.priority || a.player - b.player);
+  state.pendingActions = actions;
+  state.phase = 'waiting';
+  updateStatus('等待响应...');
+
+  const myAction = actions.find(a=>a.player===0);
+  if(myAction) showPlayerActions();
+  scheduleAIActions();
+}
+
+function scheduleAIActions(){
+  const actions = state.pendingActions.filter(a=>a.player!==0);
+  if(actions.length===0) return;
+  actions.forEach(a=>{
+    setTimeout(()=>{
+      if(state.phase!=='waiting') return;
+      let decision = 'pass';
+      if(a.type==='hu') decision = 'hu';
+      else if(a.type==='gang') decision = Math.random()<0.7 ? 'gang' : 'pass';
+      else if(a.type==='peng') decision = Math.random()<0.5 ? 'peng' : 'pass';
+      resolveAction(a.player, decision);
+    }, 400 + Math.random()*300);
+  });
+}
+
+function resolveAction(player, actionType){
+  const idx = state.pendingActions.findIndex(a=>a.player===player);
+  if(idx<0) return;
+  const action = state.pendingActions[idx];
+
+  if(actionType==='pass'){
+    state.pendingActions.splice(idx,1);
+    if(state.pendingActions.length===0){
+      state.phase = 'discard';
+      nextTurn();
+    } else {
+      showPlayerActions();
+    }
+    return;
+  }
+
+  if(actionType==='hu'){
+    const tile = action.tile;
+    const discarder = state.players[state.lastDiscardBy];
+    const dIdx = discarder.discards.lastIndexOf(tile);
+    if(dIdx>=0) discarder.discards.splice(dIdx,1);
+    state.players[player].hand.push(tile);
+    state.pendingActions = [];
+    declareWin(player, '点炮', state.lastDiscardBy);
+    return;
+  }
+
+  if(actionType==='peng'){
+    const tile = action.tile;
+    const discarder = state.players[state.lastDiscardBy];
+    const dIdx = discarder.discards.lastIndexOf(tile);
+    if(dIdx>=0) discarder.discards.splice(dIdx,1);
+    const p = state.players[player];
+    for(let k=0;k<2;k++){
+      const i = p.hand.indexOf(tile);
+      if(i>=0) p.hand.splice(i,1);
+    }
+    p.melds.push({type:'peng', tiles:[tile,tile,tile]});
+    state.pendingActions = [];
+    state.turn = player;
+    state.phase = 'discard';
+    state.justDrawn = null;
+    state.lastDiscard = null;
+    state.lastDiscardBy = -1;
+    render();
+    updateStatus(`${PLAYER_NAMES[player]} 碰了 ${TILE_NAMES[tile]}，请出牌`);
+    if(player===0) showPlayerActions();
+    else setTimeout(()=> aiDiscard(player), 500);
+    return;
+  }
+
+  if(actionType==='gang'){
+    const tile = action.tile;
+    const discarder = state.players[state.lastDiscardBy];
+    const dIdx = discarder.discards.lastIndexOf(tile);
+    if(dIdx>=0) discarder.discards.splice(dIdx,1);
+    const p = state.players[player];
+    for(let k=0;k<3;k++){
+      const i = p.hand.indexOf(tile);
+      if(i>=0) p.hand.splice(i,1);
+    }
+    p.melds.push({type:'gang', tiles:[tile,tile,tile,tile]});
+    if(state.wall.length>0){
+      p.hand.push(state.wall.pop());
+      p.hand.sort((a,b)=>a-b);
+    }
+    state.pendingActions = [];
+    state.turn = player;
+    state.phase = 'discard';
+    state.justDrawn = p.hand[p.hand.length-1];
+    state.lastDiscard = null;
+    state.lastDiscardBy = -1;
+    render();
+    updateStatus(`${PLAYER_NAMES[player]} 杠了 ${TILE_NAMES[tile]}，补摸一张`);
+    if(player===0) showPlayerActions();
+    else setTimeout(()=> aiDiscard(player), 500);
+    return;
+  }
+}
+
+// ==================== 回合推进 ====================
+function nextTurn(){
+  if(state.wall.length===0){ endGame(-1, '流局'); return; }
+  state.turn = (state.turn+1) % 4;
+  const p = state.players[state.turn];
+  p.hand.push(state.wall.pop());
+  p.hand.sort((a,b)=>a-b);
+  state.phase = 'discard';
+  state.justDrawn = p.hand[p.hand.length-1];
+  state.lastDiscard = null;
+  state.lastDiscardBy = -1;
+  state.pendingActions = [];
+  state.selectedIndex = -1;
+  
+  lastClickIndex = -1;
+  lastClickTime = 0;
+
+  render();
+
+  if(state.turn===0){
+    updateStatus('轮到你出牌');
+    showPlayerActions();
+  } else {
+    updateStatus(`${PLAYER_NAMES[state.turn]} 思考中...`);
+    setTimeout(()=> aiDiscard(state.turn), 600 + Math.random()*500);
+  }
+}
+
+// ==================== AI 出牌 ====================
+function aiDiscard(seat){
+  if(state.turn!==seat || state.phase!=='discard') return;
+  const p = state.players[seat];
+  if(canWin(p.hand)){ declareWin(seat, '自摸'); return; }
+
+  const cnt = new Map();
+  for(const t of p.hand) cnt.set(t,(cnt.get(t)||0)+1);
+
+  let bestTile = p.hand[0];
+  let bestScore = Infinity;
+  for(const [t,c] of cnt){
+    let score = c * 10;
+    if(isFengJian(t)) score -= 5;
+    if(!isFengJian(t)){
+      if(cnt.has(t-1)) score += 3;
+      if(cnt.has(t+1)) score += 3;
+    }
+    if(score < bestScore){ bestScore = score; bestTile = t; }
+  }
+  
+  const sorted = [...p.hand].sort((a,b)=>a-b);
+  const discardIdx = sorted.indexOf(bestTile);
+  discardTile(seat, discardIdx);
+}
+
+// ==================== 暗杠/补杠 ====================
+function doAnGang(seat, tile){
+  if(state.turn!==seat || state.phase!=='discard') return;
+  const p = state.players[seat];
+  for(let k=0;k<4;k++){
+    const i = p.hand.indexOf(tile);
+    if(i>=0) p.hand.splice(i,1);
+  }
+  p.melds.push({type:'angang', tiles:[tile,tile,tile,tile]});
+  if(state.wall.length>0){
+    p.hand.push(state.wall.pop());
+    p.hand.sort((a,b)=>a-b);
+  }
+  state.justDrawn = p.hand[p.hand.length-1];
+  state.selectedIndex = -1;
+  render();
+  updateStatus(`你暗杠 ${TILE_NAMES[tile]}，补摸一张`);
+  showPlayerActions();
+}
+
+function doBuGang(seat, meldIdx){
+  if(state.turn!==seat || state.phase!=='discard') return;
+  const p = state.players[seat];
+  const m = p.melds[meldIdx];
+  if(!m || m.type!=='peng') return;
+  const t = m.tiles[0];
+  const i = p.hand.indexOf(t);
+  if(i<0) return;
+  p.hand.splice(i,1);
+  m.type = 'gang';
+  m.tiles.push(t);
+  if(state.wall.length>0){
+    p.hand.push(state.wall.pop());
+    p.hand.sort((a,b)=>a-b);
+  }
+  state.justDrawn = p.hand[p.hand.length-1];
+  state.selectedIndex = -1;
+  render();
+  updateStatus(`你补杠 ${TILE_NAMES[t]}，补摸一张`);
+  showPlayerActions();
+}
+
+// ==================== 胡牌/结束 ====================
+function declareWin(seat, type, fromSeat){
+  state.gameOver = true;
+  state.winner = seat;
+  state.winType = type;
+  const p = state.players[seat];
+  const patterns = detectPatterns(p.hand, p.melds);
+  let msg = type==='自摸' ? `${PLAYER_NAMES[seat]} 自摸胡！` : `${PLAYER_NAMES[seat]} 胡了 ${PLAYER_NAMES[fromSeat]} 的 ${TILE_NAMES[state.lastDiscard]}！`;
+  if(patterns.length>0) msg += `（${patterns.join('、')}）`;
+  updateStatus(msg);
+  render();
+  const actionsEl = document.getElementById('actions');
+  actionsEl.innerHTML = '';
+  const btn = document.createElement('button');
+  btn.className = 'primary';
+  btn.textContent = '再来一局';
+  btn.onclick = ()=> newGame();
+  actionsEl.appendChild(btn);
+}
+
+function endGame(winner, type){
+  state.gameOver = true;
+  state.winner = winner;
+  state.winType = type;
+  updateStatus(type==='流局' ? '牌墙摸完，流局' : `${PLAYER_NAMES[winner]} 获胜`);
+  render();
+  const actionsEl = document.getElementById('actions');
+  actionsEl.innerHTML = '';
+  const btn = document.createElement('button');
+  btn.className = 'primary';
+  btn.textContent = '再来一局';
+  btn.onclick = ()=> newGame();
+  actionsEl.appendChild(btn);
+}
+
+newGame();
+window.__mahjong = { state: ()=>state, newGame };
+})();
+</script>
+</body>
+</html>
