@@ -15,7 +15,7 @@
     display:flex; flex-direction:column; align-items:center;
     min-height:100vh; min-height:100dvh;
     padding:8px; overflow-x:hidden; user-select:none;
-    touch-action: manipulation; /* 防止双击缩放 */
+    touch-action: manipulation;
   }
   #table {
     width:min(100vw, 900px);
@@ -57,6 +57,7 @@
   #actions {
     display:flex; flex-wrap:wrap; gap:8px; justify-content:center;
     padding:8px 0; min-height:52px;
+    align-items:center;
   }
   button {
     padding:9px 18px; border:none; border-radius:8px;
@@ -69,6 +70,24 @@
   button:disabled { opacity:.4; cursor:not-allowed; }
   button.ghost { background:#3a3a3a; }
 
+  /* 返回游戏角链接样式 */
+  .back-link {
+    display: inline-block;
+    padding: 9px 18px;
+    border-radius: 8px;
+    background: #3a3a3a;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background .12s, transform .1s;
+    cursor: pointer;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .back-link:active { background: #555; transform: scale(.97); }
+  .back-link:hover { background: #4a4a4a; }
+
   .tile {
     width:36px; height:50px;
     background:linear-gradient(#fffdf5, #e8e0c8);
@@ -79,7 +98,7 @@
     position:relative; flex-shrink:0;
     padding:3px;
     transition:transform 0.1s, box-shadow 0.1s;
-    touch-action: manipulation; /* 防止双击缩放 */
+    touch-action: manipulation;
   }
   .tile-face { width:100%; height:100%; display:block; }
   .tile.back {
@@ -103,7 +122,7 @@
     .tile { width:30px; height:42px; padding:2px; }
     .tile.small { width:24px; height:33px; padding:1.5px; }
     #seatBottom .tile { width:34px; height:47px; }
-    button { padding:8px 13px; font-size:13px; }
+    button, .back-link { padding:8px 13px; font-size:13px; }
     #discardArea { max-height:90px; }
   }
 </style>
@@ -420,7 +439,7 @@ function newGame(){
   };
   state.justDrawn = state.players[0].hand[state.players[0].hand.length-1];
   
-  lastClickIndex = -1; // 重置点击记录
+  lastClickIndex = -1;
   lastClickTime = 0;
 
   render();
@@ -470,14 +489,13 @@ function renderHand(seat){
           // ===== 双击检测逻辑 =====
           const now = Date.now();
           if (lastClickIndex === idx && (now - lastClickTime) < 350) {
-            // 如果双击的是同一张牌，且间隔小于350毫秒，直接出牌
             lastClickIndex = -1;
             lastClickTime = 0;
             discardTile(0, idx);
             return;
           }
           
-          // 单击逻辑：记录点击并切换选中状态
+          // 单击逻辑
           lastClickIndex = idx;
           lastClickTime = now;
           state.selectedIndex = (state.selectedIndex === idx ? -1 : idx);
@@ -606,6 +624,13 @@ function showPlayerActions(){
   restart.textContent = '重新开局';
   restart.onclick = ()=> newGame();
   actionsEl.appendChild(restart);
+
+  // ★★★ 返回游戏角链接 ★★★
+  const backLink = document.createElement('a');
+  backLink.className = 'back-link';
+  backLink.href = './index.html';
+  backLink.textContent = '返回游戏角';
+  actionsEl.appendChild(backLink);
 }
 
 // ==================== 出牌 ====================
@@ -629,7 +654,6 @@ function discardTile(seat, sortedIndex){
   state.phase = 'waiting';
   state.pendingActions = [];
   
-  // 重置双击记录
   lastClickIndex = -1;
   lastClickTime = 0;
 
@@ -867,6 +891,13 @@ function declareWin(seat, type, fromSeat){
   btn.textContent = '再来一局';
   btn.onclick = ()=> newGame();
   actionsEl.appendChild(btn);
+
+  // 结束后也保留返回游戏角链接
+  const backLink = document.createElement('a');
+  backLink.className = 'back-link';
+  backLink.href = './index.html';
+  backLink.textContent = '返回游戏角';
+  actionsEl.appendChild(backLink);
 }
 
 function endGame(winner, type){
@@ -882,6 +913,13 @@ function endGame(winner, type){
   btn.textContent = '再来一局';
   btn.onclick = ()=> newGame();
   actionsEl.appendChild(btn);
+
+  // 结束后也保留返回游戏角链接
+  const backLink = document.createElement('a');
+  backLink.className = 'back-link';
+  backLink.href = './index.html';
+  backLink.textContent = '返回游戏角';
+  actionsEl.appendChild(backLink);
 }
 
 newGame();

@@ -77,6 +77,58 @@
       text-decoration: none;
     }
     .back-link:active { color: #ccc; }
+
+    /* 胜利弹窗样式 */
+    .win-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .win-modal.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .win-modal-content {
+      background: #2c2c2c;
+      border: 2px solid #0a7c4e;
+      border-radius: 16px;
+      padding: 36px 48px;
+      text-align: center;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+      transform: scale(0.85);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .win-modal.show .win-modal-content {
+      transform: scale(1);
+    }
+    .win-modal-content .win-icon {
+      font-size: 56px;
+      margin-bottom: 12px;
+    }
+    .win-modal-content .win-text {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 24px;
+      letter-spacing: 1px;
+    }
+    .win-modal-content .win-text.black { color: #ccc; }
+    .win-modal-content .win-text.white { color: #fff; text-shadow: 0 0 12px rgba(255,255,255,0.5); }
+    .win-modal-content button {
+      background: #0a7c4e;
+      padding: 12px 32px;
+      font-size: 16px;
+      border-radius: 10px;
+    }
+    .win-modal-content button:active {
+      background: #0b9e63;
+    }
   </style>
 </head>
 <body>
@@ -94,6 +146,15 @@
   </div>
   <a class="back-link" href="./index.html">← 返回模式选择</a>
 
+  <!-- 胜利弹窗 -->
+  <div id="winModal" class="win-modal">
+    <div class="win-modal-content">
+      <div class="win-icon" id="winIcon">🏆</div>
+      <div class="win-text" id="winText">⚫ 黑棋获胜！</div>
+      <button onclick="closeWinModal()">再来一局</button>
+    </div>
+  </div>
+
   <script>
     (function () {
       'use strict';
@@ -101,6 +162,9 @@
       const canvas = document.getElementById('board');
       const ctx = canvas.getContext('2d');
       const statusEl = document.getElementById('status');
+      const winModal = document.getElementById('winModal');
+      const winText = document.getElementById('winText');
+      const winIcon = document.getElementById('winIcon');
 
       const SIZE = 15;
       const PADDING = 30;
@@ -114,16 +178,28 @@
       let mode = 'pvp';
       let aiThinking = false;
 
+      // 闪烁相关状态
+      let blinkStone = null;       // { row, col } 正在闪烁的棋子位置
+      let blinkCount = 0;          // 已闪烁次数（每次亮/灭算一次？我们按“亮起”次数计，共3次亮）
+      let blinkTimer = null;       // 闪烁定时器
+      let blinkPhase = 0;          // 0: 正常显示, 1: 隐藏
+
       function initBoard() {
         board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
         currentPlayer = 1;
         gameOver = false;
         history = [];
         aiThinking = false;
+        blinkStone = null;
+        blinkCount = 0;
+        blinkPhase = 0;
+        if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; }
         statusEl.textContent = '黑棋回合';
+        hideWinModal();
         draw();
       }
 
+      // 绘制棋盘（增加闪烁判断）
       function draw() {
         ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
         ctx.fillStyle = '#e8c48a';
@@ -145,6 +221,12 @@
           for (let col = 0; col < SIZE; col++) {
             const val = board[row][col];
             if (!val) continue;
+
+            // 闪烁逻辑：如果该棋子正在闪烁且当前处于隐藏相位，则跳过绘制
+            if (blinkStone && blinkStone.row === row && blinkStone.col === col && blinkPhase === 1) {
+              continue;
+            }
+
             const cx = PADDING + col * CELL;
             const cy = PADDING + row * CELL;
             const radius = CELL * 0.42;
@@ -192,18 +274,115 @@
         return false;
       }
 
+      // ---------- 闪烁控制 ----------
+      // 开始闪烁指定棋子，共闪3次（亮起3次），间隔0.5秒
+      function startBlink(row, col) {
+        // 清除可能存在的定时器
+        if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; }
+        blinkStone = { row, col };
+        blinkCount = 0;
+        blinkPhase = 0; // 先正常显示
+
+        // 立即触发第一次隐藏（即灭一下，模拟闪烁），然后周期性
+        // 我们采用：亮(0.5s) -> 灭(0.5s) -> 亮(0.5s) -> 灭(0.5s) -> 亮(0.5s) -> 灭(0.5s) -> 恢复
+        // 简化：共亮3次，灭3次。第一次从“灭”开始，让视觉上先消失再出现。
+        // 但初始棋子已经绘制，先强制隐藏一次再显示。
+        // 这里采用：立即隐藏，开始计时。
+        blinkPhase = 1;
+        draw();
+
+        blinkCount = 1; // 第一次灭已执行，接下来亮起为第1次亮
+
+        function blinkStep() {
+          if (blinkPhase === 1) {
+            // 当前是隐藏状态，切换到显示
+            blinkPhase = 0;
+            draw();
+            // 亮起后，如果已经亮了3次则停止
+            if (blinkCount >= 3) {
+              // 闪烁结束，清除状态，但保留棋子正常显示
+              blinkStone = null;
+              blinkTimer = null;
+              draw();
+              return;
+            }
+            // 否则，0.5秒后再次隐藏
+            blinkTimer = setTimeout(() => {
+              blinkPhase = 1;
+              blinkCount++;
+              draw();
+              blinkTimer = setTimeout(blinkStep, 500);
+            }, 500);
+          } else {
+            // 当前是显示状态，切换到隐藏
+            blinkPhase = 1;
+            draw();
+            blinkTimer = setTimeout(blinkStep, 500);
+          }
+        }
+
+        // 第一次隐藏后，等0.5秒显示
+        blinkTimer = setTimeout(blinkStep, 500);
+      }
+
+      // 停止闪烁并清理状态（用于重新开始、悔棋等）
+      function stopBlink() {
+        if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; }
+        blinkStone = null;
+        blinkCount = 0;
+        blinkPhase = 0;
+      }
+
+      // ---------- 胜利弹窗 ----------
+      function showWinModal(player) {
+        if (player === 1) {
+          winIcon.textContent = '⚫';
+          winText.textContent = '⚫ 黑棋获胜！';
+          winText.className = 'win-text black';
+        } else {
+          winIcon.textContent = '⚪';
+          winText.textContent = '⚪ 白棋获胜！';
+          winText.className = 'win-text white';
+        }
+        winModal.classList.add('show');
+      }
+
+      function hideWinModal() {
+        winModal.classList.remove('show');
+      }
+
+      function closeWinModal() {
+        hideWinModal();
+        restartGame();
+      }
+
+      // 暴露给全局，供按钮调用
+      window.closeWinModal = closeWinModal;
+
+      // ---------- 落子逻辑 ----------
       function placeStone(row, col) {
         if (gameOver || aiThinking) return false;
         if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
         if (board[row][col] !== 0) return false;
 
+        // 如果之前有闪烁，先停止
+        stopBlink();
+
         board[row][col] = currentPlayer;
         history.push({ row, col, player: currentPlayer });
         draw();
 
+        // 启动新落子的闪烁
+        startBlink(row, col);
+
+        // 判断胜负
         if (checkWin(row, col, currentPlayer)) {
           gameOver = true;
           statusEl.textContent = currentPlayer === 1 ? '⚫ 黑棋获胜！' : '⚪ 白棋获胜！';
+          // 显示弹窗（稍延迟，让闪烁动画先展示一下）
+          setTimeout(() => {
+            showWinModal(currentPlayer);
+          }, 500);
           return true;
         }
 
@@ -218,42 +397,173 @@
         return true;
       }
 
+      // ---------- 增强版 AI ----------
+      function evaluatePosition(row, col, player) {
+        let score = 0;
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        const opponent = player === 1 ? 2 : 1;
+
+        for (const [dx, dy] of dirs) {
+          let countSelf = 1;
+          let openSelf = 0;
+          let blocks = 0;
+
+          for (let step = 1; step <= 4; step++) {
+            const nr = row + dx * step, nc = col + dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) { blocks++; break; }
+            const val = board[nr][nc];
+            if (val === player) countSelf++;
+            else if (val === 0) { openSelf++; break; }
+            else { blocks++; break; }
+          }
+          for (let step = 1; step <= 4; step++) {
+            const nr = row - dx * step, nc = col - dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) { blocks++; break; }
+            const val = board[nr][nc];
+            if (val === player) countSelf++;
+            else if (val === 0) { openSelf++; break; }
+            else { blocks++; break; }
+          }
+
+          if (countSelf >= 5) score += 1000000;
+          else if (countSelf === 4) {
+            if (openSelf >= 1) score += 10000;
+            else if (openSelf === 0 && blocks < 2) score += 5000;
+          } else if (countSelf === 3) {
+            if (openSelf === 2) score += 1000;
+            else if (openSelf === 1) score += 200;
+          } else if (countSelf === 2) {
+            if (openSelf === 2) score += 100;
+            else if (openSelf === 1) score += 20;
+          } else if (countSelf === 1) {
+            if (openSelf === 2) score += 2;
+          }
+
+          let oppCount = 1;
+          let oppBlocks = 0;
+          for (let step = 1; step <= 4; step++) {
+            const nr = row + dx * step, nc = col + dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) { oppBlocks++; break; }
+            const val = board[nr][nc];
+            if (val === opponent) oppCount++;
+            else if (val === 0) break;
+            else { oppBlocks++; break; }
+          }
+          for (let step = 1; step <= 4; step++) {
+            const nr = row - dx * step, nc = col - dy * step;
+            if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) { oppBlocks++; break; }
+            const val = board[nr][nc];
+            if (val === opponent) oppCount++;
+            else if (val === 0) break;
+            else { oppBlocks++; break; }
+          }
+
+          if (oppCount >= 5) score += 900000;
+          else if (oppCount === 4) {
+            if (oppBlocks < 2) score += 8000;
+            else score += 2000;
+          } else if (oppCount === 3) {
+            if (oppBlocks === 0) score += 800;
+            else if (oppBlocks === 1) score += 150;
+          } else if (oppCount === 2) {
+            if (oppBlocks === 0) score += 50;
+            else if (oppBlocks === 1) score += 10;
+          }
+        }
+
+        const centerDist = Math.abs(row - 7) + Math.abs(col - 7);
+        score += (14 - centerDist) * 2;
+        return score;
+      }
+
       function aiMove() {
         if (gameOver) { aiThinking = false; return; }
 
-        for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-          if (board[r][c] !== 0) continue;
-          board[r][c] = 2;
-          const win = checkWin(r, c, 2);
-          board[r][c] = 0;
-          if (win) { aiThinking = false; placeStone(r, c); return; }
-        }
-        for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-          if (board[r][c] !== 0) continue;
-          board[r][c] = 1;
-          const win = checkWin(r, c, 1);
-          board[r][c] = 0;
-          if (win) { aiThinking = false; placeStone(r, c); return; }
-        }
-
-        const candidates = [];
-        for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-          if (board[r][c] !== 0) continue;
-          let hasNeighbor = false;
-          for (let dr = -2; dr <= 2 && !hasNeighbor; dr++)
-            for (let dc = -2; dc <= 2 && !hasNeighbor; dc++) {
-              if (dr === 0 && dc === 0) continue;
-              const nr = r + dr, nc = c + dc;
-              if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] !== 0) hasNeighbor = true;
+        for (let r = 0; r < SIZE; r++) {
+          for (let c = 0; c < SIZE; c++) {
+            if (board[r][c] !== 0) continue;
+            board[r][c] = 2;
+            const win = checkWin(r, c, 2);
+            board[r][c] = 0;
+            if (win) {
+              aiThinking = false;
+              placeStone(r, c);
+              return;
             }
-          if (hasNeighbor) candidates.push({ r, c });
+          }
         }
 
-        const pick = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : { r: 7, c: 7 };
+        for (let r = 0; r < SIZE; r++) {
+          for (let c = 0; c < SIZE; c++) {
+            if (board[r][c] !== 0) continue;
+            board[r][c] = 1;
+            const win = checkWin(r, c, 1);
+            board[r][c] = 0;
+            if (win) {
+              aiThinking = false;
+              placeStone(r, c);
+              return;
+            }
+          }
+        }
+
+        let bestScore = -Infinity;
+        let candidates = [];
+
+        for (let r = 0; r < SIZE; r++) {
+          for (let c = 0; c < SIZE; c++) {
+            if (board[r][c] !== 0) continue;
+
+            let hasNeighbor = false;
+            for (let dr = -2; dr <= 2 && !hasNeighbor; dr++) {
+              for (let dc = -2; dc <= 2 && !hasNeighbor; dc++) {
+                if (dr === 0 && dc === 0) continue;
+                const nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] !== 0) {
+                  hasNeighbor = true;
+                }
+              }
+            }
+            if (!hasNeighbor) continue;
+
+            const score = evaluatePosition(r, c, 2);
+            if (score > bestScore) {
+              bestScore = score;
+              candidates = [{ r, c }];
+            } else if (score === bestScore) {
+              candidates.push({ r, c });
+            }
+          }
+        }
+
+        let pick = null;
+        if (candidates.length > 0) {
+          pick = candidates[Math.floor(Math.random() * candidates.length)];
+        } else {
+          pick = { r: 7, c: 7 };
+          if (board[7][7] !== 0) {
+            for (let d = 1; d < SIZE; d++) {
+              for (let dr = -d; dr <= d; dr++) {
+                for (let dc = -d; dc <= d; dc++) {
+                  if (Math.abs(dr) !== d && Math.abs(dc) !== d) continue;
+                  const nr = 7 + dr, nc = 7 + dc;
+                  if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[nr][nc] === 0) {
+                    pick = { r: nr, c: nc };
+                    break;
+                  }
+                }
+                if (pick && board[pick.r][pick.c] === 0) break;
+              }
+              if (pick && board[pick.r][pick.c] === 0) break;
+            }
+          }
+        }
+
         aiThinking = false;
         placeStone(pick.r, pick.c);
       }
 
+      // ---------- 用户交互 ----------
       canvas.addEventListener('click', (e) => {
         if (mode === 'ai' && currentPlayer === 2) return;
         if (aiThinking || gameOver) return;
@@ -275,6 +585,9 @@
         if (aiThinking) return;
         if (gameOver) gameOver = false;
 
+        // 停止闪烁
+        stopBlink();
+
         if (mode === 'ai') {
           if (history.length < 2) return;
           const a = history.pop(); board[a.row][a.col] = 0;
@@ -287,10 +600,16 @@
           currentPlayer = last.player;
         }
         statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
+        hideWinModal();
         draw();
       }
 
-      function restartGame() { initBoard(); }
+      function restartGame() {
+        // 先停止闪烁和弹窗
+        stopBlink();
+        hideWinModal();
+        initBoard();
+      }
 
       function setMode(m) {
         if (aiThinking) return;

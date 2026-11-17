@@ -119,7 +119,7 @@
   <div id="status">联机模式：创建或加入房间</div>
   <div class="controls">
     <button class="primary" onclick="restartGame()">重新开始</button>
-    <button onclick="undoMove()">悔棋</button>
+    <!-- 悔棋按钮已移除 -->
   </div>
 
   <div id="onlinePanel">
@@ -159,22 +159,28 @@
       let board = [];
       let currentPlayer = 1;
       let gameOver = false;
-      let history = [];
-      let aiThinking = false;
-
+      let history = [];   // 仍然保留历史记录用于内部状态，但不提供悔棋功能
       let peer = null;
       let conn = null;
       let myColor = 0;
       let onlineReady = false;
+
+      // 闪烁相关状态
+      let blinkStone = null;       // { row, col } 正在闪烁的棋子位置
+      let blinkCount = 0;          // 已亮起次数
+      let blinkTimer = null;       // 闪烁定时器
+      let blinkPhase = 0;          // 0: 正常显示, 1: 隐藏
 
       function initBoard() {
         board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
         currentPlayer = 1;
         gameOver = false;
         history = [];
+        stopBlink();
         draw();
       }
 
+      // 绘制棋盘（增加闪烁判断）
       function draw() {
         ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
         ctx.fillStyle = '#e8c48a';
@@ -196,6 +202,12 @@
           for (let col = 0; col < SIZE; col++) {
             const val = board[row][col];
             if (!val) continue;
+
+            // 闪烁逻辑：如果该棋子正在闪烁且当前处于隐藏相位，则跳过绘制
+            if (blinkStone && blinkStone.row === row && blinkStone.col === col && blinkPhase === 1) {
+              continue;
+            }
+
             const cx = PADDING + col * CELL;
             const cy = PADDING + row * CELL;
             const radius = CELL * 0.42;
@@ -243,17 +255,88 @@
         return false;
       }
 
+      // 胜利弹窗
+      function showVictoryPopup(winner) {
+        const message = winner === 1 ? '⚫ 黑棋获胜！' : '⚪ 白棋获胜！';
+        alert(message);
+      }
+
+      // ---------- 闪烁控制 ----------
+      // 开始闪烁指定棋子，共闪3次（亮起3次），间隔0.5秒
+      function startBlink(row, col) {
+        // 清除可能存在的定时器
+        if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; }
+        blinkStone = { row, col };
+        blinkCount = 0;
+        blinkPhase = 0; // 先正常显示
+
+        // 立即触发第一次隐藏（即灭一下，模拟闪烁）
+        blinkPhase = 1;
+        draw();
+
+        blinkCount = 1; // 第一次灭已执行，接下来亮起为第1次亮
+
+        function blinkStep() {
+          if (blinkPhase === 1) {
+            // 当前是隐藏状态，切换到显示
+            blinkPhase = 0;
+            draw();
+            // 亮起后，如果已经亮了3次则停止
+            if (blinkCount >= 3) {
+              // 闪烁结束，清除状态，但保留棋子正常显示
+              blinkStone = null;
+              blinkTimer = null;
+              draw();
+              return;
+            }
+            // 否则，0.5秒后再次隐藏
+            blinkTimer = setTimeout(() => {
+              blinkPhase = 1;
+              blinkCount++;
+              draw();
+              blinkTimer = setTimeout(blinkStep, 500);
+            }, 500);
+          } else {
+            // 当前是显示状态，切换到隐藏
+            blinkPhase = 1;
+            draw();
+            blinkTimer = setTimeout(blinkStep, 500);
+          }
+        }
+
+        // 第一次隐藏后，等0.5秒显示
+        blinkTimer = setTimeout(blinkStep, 500);
+      }
+
+      // 停止闪烁并清理状态（用于重新开始、悔棋等）
+      function stopBlink() {
+        if (blinkTimer) { clearTimeout(blinkTimer); blinkTimer = null; }
+        blinkStone = null;
+        blinkCount = 0;
+        blinkPhase = 0;
+      }
+
       function applyMove(row, col, player) {
         if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
         if (board[row][col] !== 0) return false;
+
+        // 如果之前有闪烁，先停止
+        stopBlink();
+
         board[row][col] = player;
         history.push({ row, col, player });
         draw();
+
+        // 启动新落子的闪烁
+        startBlink(row, col);
+
         if (checkWin(row, col, player)) {
           gameOver = true;
           statusEl.textContent = player === 1 ? '⚫ 黑棋获胜！' : '⚪ 白棋获胜！';
+          showVictoryPopup(player);
           return true;
         }
+
         currentPlayer = player === 1 ? 2 : 1;
         statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
         return false;
@@ -284,24 +367,10 @@
         placeStone(row, col);
       });
 
-      function undoMove() {
-        if (!onlineReady) return;
-        if (history.length < 1) return;
-        sendData({ type: 'undo' });
-        doUndo();
-      }
-
-      function doUndo() {
-        if (history.length === 0) return;
-        gameOver = false;
-        const last = history.pop();
-        board[last.row][last.col] = 0;
-        currentPlayer = last.player;
-        statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
-        draw();
-      }
+      // 悔棋功能已移除，不再绑定到任何按钮或窗口
 
       function restartGame() {
+        stopBlink();
         if (!onlineReady) { initBoard(); return; }
         sendData({ type: 'restart' });
         initBoard();
@@ -378,12 +447,11 @@
           if (!data || !data.type) return;
           if (data.type === 'move') {
             applyMove(data.row, data.col, data.player);
-          } else if (data.type === 'undo') {
-            doUndo();
           } else if (data.type === 'restart') {
             initBoard();
             statusEl.textContent = currentPlayer === 1 ? '黑棋回合' : '白棋回合';
           }
+          // 不再处理 'undo' 类型的数据
         });
         conn.on('close', () => {
           onlineReady = false;
@@ -423,7 +491,6 @@
       }
 
       window.restartGame = restartGame;
-      window.undoMove = undoMove;
       window.createRoom = createRoom;
       window.joinRoom = joinRoom;
       window.copyRoomCode = copyRoomCode;
