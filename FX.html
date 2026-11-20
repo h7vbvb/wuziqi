@@ -606,7 +606,7 @@ function renderMarks() {
    ========================================================= */
 const DICE_PATTERN = {1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
 function renderDice(n) {
-  const dots = document.getElementById('dice').children;
+  const dots = document.getElementById('dice').querySelectorAll('i');
   const on = DICE_PATTERN[n] || [];
   for (let i = 0; i < 9; i++) dots[i].classList.toggle('on', on.indexOf(i) >= 0);
   document.getElementById('dice').classList.toggle('show', n > 0);
