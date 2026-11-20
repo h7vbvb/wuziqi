@@ -149,8 +149,20 @@
       <svg id="board" viewBox="0 0 600 600" preserveAspectRatio="xMidYMid meet" aria-label="飞行棋棋盘"></svg>
       <div class="zoomTip">双指放大页面，可更精准操作</div>
     </div>
-
+    
     <aside class="side">
+      <div class="panel">
+        <div class="dicePanel">
+          <div class="dice" id="dice">
+            <b class="dq">?</b><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="diceInfo">
+            <div class="t">骰子</div>
+            <div class="v" id="diceText">掷到 6 才能起飞</div>
+          </div>
+        </div>
+        <button id="btnRoll" class="primary">掷骰子</button>
+      </div>
       <div class="panel">
         <h2>对战模式</h2>
         <div class="seg" id="segMode">
@@ -179,18 +191,7 @@
         <div id="onlineHint">房主建好房间后，把房号发给对方</div>
       </div>
 
-      <div class="panel">
-        <div class="dicePanel">
-          <div class="dice" id="dice">
-            <b class="dq">?</b><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-          </div>
-          <div class="diceInfo">
-            <div class="t">骰子</div>
-            <div class="v" id="diceText">掷到 6 才能起飞</div>
-          </div>
-        </div>
-        <button id="btnRoll" class="primary">掷骰子</button>
-      </div>
+      
 
       <div class="panel">
         <h2>进度<span id="stepInfo">0 回合</span></h2>
